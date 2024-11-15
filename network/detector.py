@@ -216,7 +216,7 @@ class Detector(BaseDetector):
         return scores0, scores1, scores2
 
     def get_scores(self, que_imgs):
-        que_x0, que_x1, que_x2 = self.extract_feats(que_imgs)
+        que_x0, que_x1, que_x2 = self.extract_feats(que_imgs) # 1, f, h, w
         ref_x0, ref_x1, ref_x2 = self.ref_center_feats # rfn,f,hr,wr
 
         scores2 = F.conv2d(que_x2, ref_x2, padding=1)
@@ -243,7 +243,7 @@ class Detector(BaseDetector):
             scores.append(F.interpolate(scores_cur.reshape(qn,3*rfn,hcs,wcs),size=(hs,ws),mode='bilinear').reshape(qn,3,rfn,hs,ws))
 
         scores = torch.cat(scores, 1) # qn,sn*3,rfn,hq/8,wq/8
-        scores = self.score_conv(scores)
+        scores = self.score_conv(scores) # qn,d,rfn,hq/8,wq/8
         scores_feats = torch.max(scores,2)[0] # qn,f,hq/8,wq/8
         scores = self.score_predict(scores_feats) # qn,1,hq/8,wq/8
 

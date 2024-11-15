@@ -91,6 +91,9 @@ def main(args):
     if object_name.startswith('linemod'):
         ref_database_name = que_database_name = object_name
         que_split = 'linemod_test'
+    elif object_name.startswith("occluded_linemod"):
+        ref_database_name = que_database_name = object_name
+        que_split = 'occluded_linemod_test'
     elif object_name.startswith('genmop'):
         ref_database_name = object_name+'-ref'
         que_database_name = object_name+'-test'

@@ -575,7 +575,7 @@ def sample_fps_points(points, sample_num, init_center=True, index_model=False, i
     for k in range(min(sample_num-1, points.shape[0]-1)):
         cur_distance=np.linalg.norm(cur_point[None,:]-points,2,1)
         distance=np.min(np.stack([cur_distance,distance],1),1)
-        cur_index=np.argmax(distance)
+        cur_index=np.argmax(distance) # 选离output_points中最小距离中的最大值的那个点
         cur_point=points[cur_index]
         output_points.append(cur_point)
         output_index.append(cur_index)

@@ -52,6 +52,53 @@ class BaseDatabase(abc.ABC):
         img = self.get_image(img_id)
         h, w = img.shape[:2]
         return np.ones([h,w],np.bool)
+    
+
+OCCLUDED_LINEMOD_ROOT='data/OCCLUDED_LINEMOD'
+class OCCLUDED_LINEMODDatabase(BaseDatabase):
+    K=np.array([[572.4114, 0., 325.2611],
+               [0., 573.57043, 242.04899],
+               [0., 0., 1.]], dtype=np.float32)
+    def __init__(self, database_name):
+        super().__init__(database_name)
+        _, self.model_name = database_name.split('/')
+        self.img_ids = [str(k) for k in range(len(os.listdir(f'{OCCLUDED_LINEMOD_ROOT}/RGB-D/rgb_noseg')))]
+        self.model = self.get_ply_model().astype(np.float32)
+        self.object_center = np.zeros(3,dtype=np.float32)
+        self.object_vert = np.asarray([0,0,1],np.float32)
+        self.img_id2depth_range = {}
+        self.img_id2pose = {}
+
+    def get_ply_model(self):
+        fn = Path(f'{OCCLUDED_LINEMOD_ROOT}/models/{self.model_name}/{self.model_name}.pkl')
+        if fn.exists(): return read_pickle(str(fn))
+        model = np.loadtxt(f'{OCCLUDED_LINEMOD_ROOT}/models/{self.model_name}/{self.model_name}.xyz')
+        if model.shape[0]>4096:
+            idxs = np.arange(model.shape[0])
+            np.random.shuffle(idxs)
+            model = model[idxs[:4096]]
+        save_pickle(model, str(fn))
+        return model
+
+    def get_image(self, img_id):
+        return imread(f'{OCCLUDED_LINEMOD_ROOT}/RGB-D/rgb_noseg/{int(img_id):06}.jpg')
+
+    def get_K(self, img_id):
+        return np.copy(self.K)
+
+    def get_pose(self, img_id):
+        if img_id in self.img_id2pose:
+            return self.img_id2pose[img_id]
+        else:
+            pose = np.load(f'{OCCLUDED_LINEMOD_ROOT}/blender_poses/{self.model_name}/pose{int(img_id)}.npy')
+            self.img_id2pose[img_id] = pose
+            return pose
+
+    def get_img_ids(self):
+        return self.img_ids.copy()
+
+    def get_mask(self, img_id):
+        return np.sum(imread(f'{OCCLUDED_LINEMOD_ROOT}/masks/{self.model_name}/{int(img_id)}.png'),-1)>0
 
 LINEMOD_ROOT='data/LINEMOD'
 class LINEMODDatabase(BaseDatabase):
@@ -295,6 +342,7 @@ class CustomDatabase(BaseDatabase):
 def parse_database_name(database_name:str)->BaseDatabase:
     name2database={
         'linemod': LINEMODDatabase,
+        'occluded_linemod': OCCLUDED_LINEMODDatabase,
         'genmop': GenMOPDatabase,
         'custom': CustomDatabase,
 
@@ -318,6 +366,14 @@ def get_database_split(database, split_name):
         if split_name=='linemod_val': que_ids = que_ids[::10]
         lines = np.loadtxt(f"{LINEMOD_ROOT}/{model_name}/train.txt", dtype=str).tolist()
         for line in lines: ref_ids.append(str(int(line.split('/')[-1].split('.')[0])))
+    elif split_name.startswith("occluded_linemod"): # occluded_linemod
+        assert(database.database_name.startswith("occluded_linemod"))
+        model_name = database.database_name.split("/")[1]
+        lines = np.loadtxt(f"{OCCLUDED_LINEMOD_ROOT}/anns/{model_name}/test.txt",dtype=str).tolist()
+        que_ids, ref_ids = [], []
+        for line in lines: que_ids.append(str(int(line.split('/')[-1].split(".")[0])))
+        lines = np.loadtxt(f"{OCCLUDED_LINEMOD_ROOT}/anns/{model_name}/train.txt",dtype=str).tolist()
+        for line in lines: ref_ids.append(str(int(line.split('/')[-1].split('.')[0])))
     elif split_name=='all':
         ref_ids = que_ids = database.get_img_ids()
     else:
@@ -326,6 +382,8 @@ def get_database_split(database, split_name):
 
 def get_ref_point_cloud(database):
     if isinstance(database, LINEMODDatabase):
+        ref_point_cloud = database.model
+    elif isinstance(database, OCCLUDED_LINEMODDatabase):
         ref_point_cloud = database.model
     elif isinstance(database, GenMOPDatabase):
         ref_point_cloud = database.meta_info.object_point_cloud
@@ -346,7 +404,10 @@ def get_ref_point_cloud(database):
 def get_diameter(database):
     if isinstance(database, LINEMODDatabase):
         model_name = database.database_name.split('/')[-1]
-        return np.loadtxt(f"{LINEMOD_ROOT}/{model_name}/distance.txt") / 100
+        return np.loadtxt(f"{LINEMOD_ROOT}/{model_name}/distance.txt") / 100 # 单位转化为m
+    elif isinstance(database, OCCLUDED_LINEMODDatabase):
+        model_name = database.database_name.split('/')[-1]
+        return np.loadtxt(f"{OCCLUDED_LINEMOD_ROOT}/distance/{model_name}/distance.txt") / 100 # 单位转化为m
     elif isinstance(database, GenMOPDatabase):
         return 2.0 # we already align and scale it
     elif isinstance(database, GoogleScannedObjectDatabase):
@@ -364,6 +425,8 @@ def get_diameter(database):
 
 def get_object_center(database):
     if isinstance(database, LINEMODDatabase):
+        return database.object_center
+    elif isinstance(database, OCCLUDED_LINEMODDatabase):
         return database.object_center
     elif isinstance(database, GenMOPDatabase):
         return database.meta_info.center
@@ -383,6 +446,8 @@ def get_object_center(database):
 def get_object_vert(database):
     if isinstance(database, LINEMODDatabase):
         return database.object_vert
+    elif isinstance(database, OCCLUDED_LINEMODDatabase):
+        return database.object_vert    
     elif isinstance(database, GenMOPDatabase):
         return np.asarray([0,0,1], np.float32)
     elif isinstance(database, GoogleScannedObjectDatabase):

@@ -60,7 +60,7 @@ def normalize_reference_views(database, ref_ids, size, margin,
     ref_poses = np.asarray([database.get_pose(ref_id) for ref_id in ref_ids]) # rfn,3,3
     ref_Ks = np.asarray([database.get_K(ref_id) for ref_id in ref_ids]) # rfn,3,3
     ref_cens = np.asarray([project_points(object_center[None],pose, K)[0][0] for pose,K in zip(ref_poses, ref_Ks)]) # rfn,2
-    ref_cams = np.stack([pose_inverse(pose)[:,3] for pose in ref_poses], 0) # rfn, 3
+    ref_cams = np.stack([pose_inverse(pose)[:,3] for pose in ref_poses], 0) # rfn, 3 世界坐标
 
     # ensure that the output reference images have the same scale
     ref_dist = np.linalg.norm(ref_cams - object_center[None,], 2, 1) # rfn
