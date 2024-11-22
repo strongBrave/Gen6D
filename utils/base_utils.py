@@ -575,7 +575,7 @@ def sample_fps_points(points, sample_num, init_center=True, index_model=False, i
     for k in range(min(sample_num-1, points.shape[0]-1)):
         cur_distance=np.linalg.norm(cur_point[None,:]-points,2,1)
         distance=np.min(np.stack([cur_distance,distance],1),1)
-        cur_index=np.argmax(distance) # 选离output_points中最小距离中的最大值的那个点
+        cur_index=np.argmax(distance)
         cur_point=points[cur_index]
         output_points.append(cur_point)
         output_index.append(cur_index)
@@ -642,7 +642,7 @@ def transformation_decompose_2d(M):
     rotation = np.arctan2(M[1, 0], M[0, 0])
     offset = M[:2,2]
     return scale, rotation, offset
-
+    
 def transformation_crop(img, position, scale, angle, size, new_position=None):
     M = transformation_offset_2d(-position[0], -position[1])
     M = transformation_compose_2d(M, transformation_scale_2d(scale))
@@ -661,6 +661,6 @@ def look_at_rotation(point):
     R @ x_raw -> x_lookat
     """
     x, y = point
-    R1 = euler2mat(-np.arctan2(x, 1),0,0,'syxz')
-    R2 = euler2mat(np.arctan2(y, 1),0,0,'sxyz')
+    R1 = euler2mat(-np.arctan2(x, 1),0,0,'syxz') # 绕y轴转
+    R2 = euler2mat(np.arctan2(y, 1),0,0,'sxyz')  # 绕x轴转
     return R2 @ R1

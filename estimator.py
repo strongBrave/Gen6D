@@ -7,7 +7,7 @@ from dataset.database import BaseDatabase, get_database_split, get_object_vert, 
 from network import name2network
 from utils.base_utils import load_cfg, transformation_offset_2d, transformation_scale_2d, \
     transformation_compose_2d, transformation_crop, transformation_rotation_2d
-from utils.database_utils import select_reference_img_ids_fps, normalize_reference_views
+from utils.database_utils import select_reference_img_ids_fps, select_reference_img_ids_fps_left_hemisphere, normalize_reference_views
 from utils.pose_utils import estimate_pose_from_similarity_transform_compose
 
 
@@ -142,7 +142,8 @@ class Gen6DEstimator:
         ref_ids_all, _ = get_database_split(database, split_type)
 
         # use fps to select reference images for detection and selection
-        ref_ids = select_reference_img_ids_fps(database, ref_ids_all, self.cfg['ref_view_num'])
+        # note: use left hemisphere reference images
+        ref_ids = select_reference_img_ids_fps_left_hemisphere(database, ref_ids_all, self.cfg['ref_view_num'])
         ref_imgs, ref_masks, ref_Ks, ref_poses, ref_Hs = \
             normalize_reference_views(database, ref_ids, self.cfg['ref_resolution'], 0.05)
 
@@ -150,6 +151,11 @@ class Gen6DEstimator:
         rfn, h, w, _ = ref_imgs.shape
         ref_imgs_rots = []
         angles = [-np.pi/2, -np.pi/4, 0, np.pi/4, np.pi/2]
+        """
+        在计算机图像处理中，旋转操作的默认基点是图像的左上角 (0, 0)。如果直接对图像应用旋转矩阵,
+        图像会围绕左上角旋转，导致结果无法满足“绕图像中心旋转”的需求。
+        为了实现围绕图像中心的旋转，需要首先将图像的中心移动到原点 (0, 0)，这样旋转就会以中心为基点，而不是左上角。
+        """
         for angle in angles:
             M = transformation_offset_2d(-w/2,-h/2)
             M = transformation_compose_2d(M, transformation_rotation_2d(angle))
@@ -178,7 +184,7 @@ class Gen6DEstimator:
             with torch.no_grad():
                 detection_outputs = self.detector.detect_que_imgs(que_img[None])
                 position = detection_outputs['positions'][0]
-                scale_r2q = detection_outputs['scales'][0]
+                scale_r2q = detection_outputs['scales'][0] # scale_r2q 表示：目标在查询图像中相对于参考图像的缩放比例。
 
             # crop the image according to the detected scale and the detected position
             que_img_, _ = transformation_crop(que_img, position, 1/scale_r2q, 0, self.cfg['ref_resolution'])  # h,w,3

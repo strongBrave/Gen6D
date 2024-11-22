@@ -3,10 +3,17 @@ import torch.nn.functional as F
 from dataset.database import get_object_center, get_diameter, get_object_vert
 from utils.base_utils import *
 from utils.pose_utils import scale_rotation_difference_from_cameras, let_me_look_at, let_me_look_at_2d
+from utils.draw_utils import visualize_hemisphere
 
 
 def look_at_crop(img, K, pose, position, angle, scale, h, w):
     """rotate the image with "angle" and resize it with "scale", then crop the image on "position" with (h,w)"""
+    """
+    参数说明：
+    1. let_me_look_at_2d()是将相机的光心指向物体的中心再image plane上的2d投影点。其中R_new是完成这个操作时摄像机须沿着xy轴旋转的矩阵，f_new是调整光心位置后新的focal
+    2. f_new是将camera对准物体的中心并且将物体crop为(h, w)之后最终的focal
+    3. R_new, R_z是作用与image的，整个过程中摄像机是没动的
+    """
     # this function will return
     # 1) the resulted pose (pose_new) and intrinsic (K_new);
     # 2) pose_new = pose_compose(pose, pose_rect): "pose_rect" is the difference between the "pose_new" and the "pose"
@@ -37,9 +44,9 @@ def compute_normalized_view_correlation(que_poses,ref_poses, center, th=True):
         ref_cams = (ref_poses[:,:,:3].permute(0,2,1) @ -ref_poses[:,:,3:])[...,0] # rfn,3
         que_diff = que_cams - center[None]
         ref_diff = ref_cams - center[None]
-        que_diff = F.normalize(que_diff, dim=1)
-        ref_diff = F.normalize(ref_diff, dim=1)
-        corr = torch.sum(que_diff[:,None] * ref_diff[None,:], 2)
+        que_diff = F.normalize(que_diff, dim=1) # qn, 3
+        ref_diff = F.normalize(ref_diff, dim=1) # rfn, 3
+        corr = torch.sum(que_diff[:,None] * ref_diff[None,:], 2) # [qn, 1, 3] * [1, rfn, 3] -> [qn, rfn]
     else:
         que_cams = (que_poses[:,:,:3].transpose([0,2,1]) @ -que_poses[:,:,3:])[...,0] # qn,3
         ref_cams = (ref_poses[:,:,:3].transpose([0,2,1]) @ -ref_poses[:,:,3:])[...,0] # rfn,3
@@ -60,12 +67,12 @@ def normalize_reference_views(database, ref_ids, size, margin,
     ref_poses = np.asarray([database.get_pose(ref_id) for ref_id in ref_ids]) # rfn,3,3
     ref_Ks = np.asarray([database.get_K(ref_id) for ref_id in ref_ids]) # rfn,3,3
     ref_cens = np.asarray([project_points(object_center[None],pose, K)[0][0] for pose,K in zip(ref_poses, ref_Ks)]) # rfn,2
-    ref_cams = np.stack([pose_inverse(pose)[:,3] for pose in ref_poses], 0) # rfn, 3 世界坐标
+    ref_cams = np.stack([pose_inverse(pose)[:,3] for pose in ref_poses], 0) # rfn, 3
 
     # ensure that the output reference images have the same scale
     ref_dist = np.linalg.norm(ref_cams - object_center[None,], 2, 1) # rfn
     ref_focal_look = np.asarray([let_me_look_at(pose, K, object_center)[1] for pose, K in zip(ref_poses, ref_Ks)]) # rfn
-    ref_focal_new = size * (1 - margin) / object_diameter * ref_dist
+    ref_focal_new = size * (1 - margin) / object_diameter * ref_dist # rfn，pinhole camera model
     ref_scales = ref_focal_new / ref_focal_look
 
     # ref_vert_angle will rotate the reference image to ensure the "up" direction approximate the Y- of the image
@@ -91,9 +98,10 @@ def normalize_reference_views(database, ref_ids, size, margin,
         if add_rots:
             ref_img_rot = np.stack([look_at_crop(ref_img, ref_Ks[k], ref_poses[k], ref_cens[k], ref_vert_angle[k]+rot, ref_scales[k], size, size)[0] for rot in rots_list],0)
             ref_imgs_rots.append(ref_img_rot)
-
+        cv2.imwrite("original_img.jpg", ref_img)
         ref_img_new, ref_K_new, ref_pose_new, ref_pose_rect, ref_H = look_at_crop(
             ref_img, ref_Ks[k], ref_poses[k], ref_cens[k], ref_vert_angle[k], ref_scales[k], size, size)
+        cv2.imwrite("cropped_img.jpg", ref_img_new)
         ref_imgs_new.append(ref_img_new)
         ref_Ks_new.append(ref_K_new)
         ref_poses_new.append(ref_pose_new)
@@ -122,6 +130,30 @@ def select_reference_img_ids_fps(database, ref_ids_all, ref_num, random_fps=Fals
     ref_ids = np.asarray(ref_ids_all)[idxs]  # rfn
     return ref_ids
 
+def select_reference_img_ids_fps_left_hemisphere(database, ref_ids_all, ref_num, random_fps=False):
+    object_center = get_object_center(database)
+    
+    # 获取所有参考图像的位姿
+    poses = [database.get_pose(ref_id) for ref_id in ref_ids_all]
+    cam_pts = np.asarray([pose_inverse(pose)[:, 3] - object_center for pose in poses])  # 相机位置向量
+    
+    # 筛选位于左半球的参考图像
+    left_hemisphere_mask = cam_pts[:, 0] < 0  # 判断相机位置的 x 坐标是否小于 0
+    cam_pts_left = cam_pts[left_hemisphere_mask]
+    ref_ids_left = np.asarray(ref_ids_all)[left_hemisphere_mask]
+    visualize_hemisphere(cam_pts=cam_pts, cam_pts_left=cam_pts_left, save_path="hemisphere.jpg")
+
+    # 如果随机采样，直接在左半球的点上进行 FPS
+    if random_fps:
+        idxs = sample_fps_points(cam_pts_left, ref_num, False, index_model=True)
+    else:
+        idxs = sample_fps_points(cam_pts_left, ref_num + 1, True, index_model=True)
+    
+    # 提取筛选后的参考图像 ID
+    ref_ids = ref_ids_left[idxs]
+    return ref_ids
+
+
 def select_reference_img_ids_refinement(ref_database, object_center, ref_ids, sel_pose, refine_ref_num=6, refine_even_ref_views=False, refine_even_num=128):
     ref_ids = np.asarray(ref_ids)
     ref_poses_all = np.asarray([ref_database.get_pose(ref_id) for ref_id in ref_ids])
@@ -137,6 +169,24 @@ def select_reference_img_ids_refinement(ref_database, object_center, ref_ids, se
     ref_idxs = ref_idxs[:refine_ref_num]
     ref_ids = ref_ids[ref_idxs]
     return ref_ids
+
+def select_reference_img_ids_opposite_refinement(ref_database, object_center, ref_ids, sel_pose, o_refine_ref_num=6, o_refine_even_ref_views=False, o_refine_even_num=128):
+    ref_ids = np.asarray(ref_ids)
+    ref_poses_all = np.asarray([ref_database.get_pose(ref_id) for ref_id in ref_ids])
+    if o_refine_even_ref_views:
+        # use fps to resample the reference images to make them distribute more evenly
+        ref_cams_all = np.asarray([pose_inverse(pose)[:, 3] for pose in ref_poses_all])
+        idx = sample_fps_points(ref_cams_all, o_refine_even_num + 1, True, index_model=True)
+        ref_ids = ref_ids[idx]
+        ref_poses_all = ref_poses_all[idx]
+
+    corr = compute_normalized_view_correlation(sel_pose[None], ref_poses_all, object_center, False)
+    # note: this operation is to select the most uncorrelated reference images
+    ref_idxs = np.argsort(corr[0])
+    ref_idxs = ref_idxs[:o_refine_ref_num]
+    ref_ids = ref_ids[ref_idxs]
+    return ref_ids
+
 
 # def normalize_reference_views(database: BaseDatabase, ref_ids_all, ref_num=32, size=128, margin=0.05):
 #     ref_ids = select_reference_img_ids_fps(database, ref_ids_all, ref_num)

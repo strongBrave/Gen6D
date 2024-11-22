@@ -7,7 +7,7 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from matplotlib import cm
-
+from mpl_toolkits.mplot3d import Axes3D
 
 def newline(p1, p2):
     ax = plt.gca()
@@ -292,3 +292,51 @@ def draw_bbox_3d(img,pts2d,color=(0,255,0)):
     img = cv2.line(img,tuple(pts2d[2]),tuple(pts2d[6]),color,2)
     img = cv2.line(img,tuple(pts2d[3]),tuple(pts2d[7]),color,2)
     return img
+
+
+def visualize_hemisphere(cam_pts, cam_pts_left, save_path=None):
+    """
+    可视化相机位姿，并标注左半球的位姿，同时可选择保存图像
+    :param cam_pts: 所有相机位置向量 (n, 3)
+    :param cam_pts_left: 筛选后的左半球相机位置向量 (m, 3)
+    :param save_path: 图像保存路径 (str)，如果为 None，则只显示图像
+    """
+    cam_pts /= np.linalg.norm(cam_pts, axis=1, keepdims=True)  # 归一化到单位球
+    cam_pts_left /= np.linalg.norm(cam_pts_left, axis=1, keepdims=True)  # 归一化到单位球
+    # 创建 3D 绘图
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # 绘制单位球体
+    u = np.linspace(0, 2 * np.pi, 100)
+    v = np.linspace(0, np.pi, 100)
+    x = np.outer(np.cos(u), np.sin(v))
+    y = np.outer(np.sin(u), np.sin(v))
+    z = np.outer(np.ones(np.size(u)), np.cos(v))
+    ax.plot_surface(x, y, z, color='lightblue', alpha=0.3, edgecolor='gray')
+
+    # 绘制所有相机位置（右半球用红色）
+    ax.scatter(cam_pts[:, 0], cam_pts[:, 1], cam_pts[:, 2], c='red', label="Right Hemisphere", alpha=0.5)
+
+    # 绘制左半球相机位置（绿色）
+    ax.scatter(cam_pts_left[:, 0], cam_pts_left[:, 1], cam_pts_left[:, 2], c='green', label="Left Hemisphere", s=50)
+
+    # 设置图例
+    ax.legend()
+    ax.set_title("Camera Positions: Left Hemisphere (Green), Right Hemisphere (Red)")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+
+    # 调整视角
+    ax.view_init(elev=30, azim=120)
+
+    # 保存或显示图像
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Image saved to {save_path}")
+    else:
+        plt.show()
+
+    # 关闭图像以释放内存
+    plt.close(fig)
